@@ -1,4 +1,4 @@
-# recorder_ui.py (đã sửa lỗi cú pháp)
+# recorder_ui.py
 import sys
 import os
 import sounddevice as sd
@@ -7,11 +7,12 @@ import wave
 from datetime import datetime
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                                QHBoxLayout, QPushButton, QLabel, QSlider, QMessageBox,
-                               QTableWidget, QTableWidgetItem, QDialog, QHeaderView)
+                               QTableWidget, QTableWidgetItem, QDialog, QHeaderView,
+                               QFileDialog)
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QFont
 
-# Import module trích xuất đặc trưng
+# Module trích xuất đặc trưng
 from feature_extractor import extract_features, save_features_to_csv
 
 
@@ -19,7 +20,7 @@ class RecorderApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("NCKH - Ghi âm và Trích xuất đặc trưng")
-        self.setFixedSize(700, 400)
+        self.setFixedSize(700, 450)
 
         self.sample_rate = 44100
         self.channels = 1
@@ -62,8 +63,10 @@ class RecorderApp(QMainWindow):
         self.record_btn = QPushButton("🎙 Ghi âm")
         self.stop_btn = QPushButton("⏹ Dừng")
         self.stop_btn.setEnabled(False)
+        self.open_file_btn = QPushButton("📂 Mở file âm thanh")
         btn_layout.addWidget(self.record_btn)
         btn_layout.addWidget(self.stop_btn)
+        btn_layout.addWidget(self.open_file_btn)
         layout.addLayout(btn_layout)
 
         self.view_features_btn = QPushButton("📊 Xem đặc trưng cuối")
@@ -72,6 +75,7 @@ class RecorderApp(QMainWindow):
 
         self.record_btn.clicked.connect(self.start_recording)
         self.stop_btn.clicked.connect(self.stop_recording)
+        self.open_file_btn.clicked.connect(self.open_and_extract)
         self.view_features_btn.clicked.connect(self.show_last_features)
 
         self.timer = QTimer()
@@ -83,6 +87,7 @@ class RecorderApp(QMainWindow):
         self.gain = value / 10.0
         self.gain_label.setText(f"{self.gain:.1f}x")
 
+    # ---------- GHI ÂM ----------
     def start_recording(self):
         if self.is_recording:
             return
@@ -106,6 +111,7 @@ class RecorderApp(QMainWindow):
         self.status_label.setText("🔴 ĐANG GHI...")
         self.record_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
+        self.open_file_btn.setEnabled(False)
         self.view_features_btn.setEnabled(False)
 
     def audio_callback(self, indata, frames, time, status):
@@ -135,44 +141,79 @@ class RecorderApp(QMainWindow):
                 wf.setframerate(self.sample_rate)
                 wf.writeframes(audio_int16.tobytes())
 
-            self.status_label.setText(
-                f"✅ Đã lưu: {os.path.basename(self.current_file)}")
+            self.status_label.setText(f"✅ Đã lưu: {os.path.basename(self.current_file)}")
 
             # Trích xuất đặc trưng
-            self.status_label.setText("📊 Đang trích xuất đặc trưng...")
-            QApplication.processEvents()
-
-            try:
-                features = extract_features(self.current_file)
-                csv_path = self.current_file.replace('.wav', '_features.csv')
-                save_features_to_csv(features, csv_path)
-                self.last_features_csv = csv_path
-                self.view_features_btn.setEnabled(True)
-                self.status_label.setText(f"✅ Đã lưu file âm thanh và đặc trưng: {os.path.basename(csv_path)}")
-                QMessageBox.information(
-                    self, "Thành công", f"Đã lưu:\n- Âm thanh: {self.current_file}\n- Đặc trưng: {csv_path}"
-                )
-            except Exception as e:
-                self.status_label.setText("❌ Lỗi trích xuất đặc trưng")
-                QMessageBox.critical(
-                    self, "Lỗi", f"Không thể trích xuất đặc trưng:\n{str(e)}")
+            self.extract_and_save_features(self.current_file)
         else:
             self.status_label.setText("⚠️ Không có dữ liệu")
             QMessageBox.warning(
-                self, "Lỗi", "Không ghi được dữ liệu âm thanh.")
+                self, "Lỗi", "Không ghi được dữ liệu âm thanh."
+            )
 
         self.record_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
+        self.open_file_btn.setEnabled(True)
         self.current_file = None
 
+    # ---------- MỞ FILE CÓ SẴN ----------
+    def open_and_extract(self):
+        # Hộp thoại chọn file âm thanh
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Chọn file âm thanh",
+            "",
+            "Âm thanh (*.wav *.mp3 *.flac *.m4a);;Tất cả (*.*)"
+        )
+        if not file_path:
+            return
+
+        self.status_label.setText(f"📁 Đang xử lý: {os.path.basename(file_path)}")
+        QApplication.processEvents()
+
+        # Trích xuất đặc trưng từ file đã chọn
+        self.extract_and_save_features(file_path)
+
+    # ---------- HÀM TRÍCH XUẤT CHUNG ----------
+    def extract_and_save_features(self, audio_file_path):
+        """Gọi module trích xuất, lưu CSV và cập nhật giao diện"""
+        try:
+            features = extract_features(audio_file_path)
+            # Tạo đường dẫn CSV: cùng thư mục với file gốc hoặc trong raw_audio
+            base_name = os.path.splitext(os.path.basename(audio_file_path))[0]
+            csv_filename = f"{base_name}_features.csv"
+            # Lưu CSV cùng thư mục với file gốc (hoặc bạn có thể sửa thành raw_audio)
+            csv_path = os.path.join(os.path.dirname(audio_file_path), csv_filename)
+            save_features_to_csv(features, csv_path)
+            self.last_features_csv = csv_path
+            self.view_features_btn.setEnabled(True)
+            self.status_label.setText(f"✅ Đã trích xuất đặc trưng: {csv_filename}")
+            QMessageBox.information(
+                self, "Thành công",
+                f"Đã trích xuất đặc trưng từ:\n{audio_file_path}\n\nĐã lưu CSV:\n{csv_path}"
+            )
+        except Exception as e:
+            self.status_label.setText("❌ Lỗi trích xuất đặc trưng")
+            QMessageBox.critical(
+                self, "Lỗi", f"Không thể trích xuất đặc trưng từ file:\n{str(e)}"
+            )
+
+    # ---------- HIỂN THỊ ĐẶC TRƯNG ----------
     def show_last_features(self):
         if not self.last_features_csv or not os.path.exists(self.last_features_csv):
             QMessageBox.warning(self, "Lỗi", "Chưa có file đặc trưng nào.")
             return
 
-        import pandas as pd
-        df = pd.read_csv(self.last_features_csv)
-        features_dict = df.iloc[0].to_dict()
+        import csv
+        with open(self.last_features_csv, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            features_dict = next(reader)
+
+        for key, value in features_dict.items():
+            try:
+                features_dict[key] = float(value)
+            except ValueError:
+                pass
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Các đặc trưng trích xuất")
